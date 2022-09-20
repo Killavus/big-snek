@@ -27,6 +27,19 @@ enum MoveDirection {
 
 struct SnakeBodies(Vec<(Entity, Vec<Entity>)>);
 
+enum GameState {
+    Starting { countdown: usize, timer: Timer },
+    Paused { points: usize },
+    Running { points: usize },
+    GameOver { points: usize },
+}
+
+impl GameState {
+    fn running(&self) -> bool {
+        matches!(self, GameState::Running { .. })
+    }
+}
+
 const TILE_W: f32 = 16.0;
 const TILE_H: f32 = 16.0;
 
@@ -75,10 +88,26 @@ fn spawn_snake(
     (snake_id, segments)
 }
 
+#[derive(Component)]
+struct UIScreenOverlay;
+
+#[derive(Component)]
+struct UICenterText;
+
+#[derive(Component)]
+struct UIRightHeaderText;
+
 const MAP_W: f32 = 60.0;
 const MAP_H: f32 = 60.0;
+const HEADER_H: f32 = 32.0;
 
-fn setup(mut commands: Commands, mut windows: ResMut<Windows>, asset_server: Res<AssetServer>) {
+fn setup(
+    mut commands: Commands,
+    mut windows: ResMut<Windows>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut colors: ResMut<Assets<ColorMaterial>>,
+    asset_server: Res<AssetServer>,
+) {
     commands.spawn_bundle(Camera2dBundle::default());
 
     let snake_textures = SnakeTextures(
@@ -91,8 +120,91 @@ fn setup(mut commands: Commands, mut windows: ResMut<Windows>, asset_server: Res
     let window = windows.get_primary_mut().unwrap();
 
     window.set_resizable(false);
-    window.set_resolution(MAP_W * TILE_W, MAP_H * TILE_H);
+    window.set_resolution(MAP_W * TILE_W, MAP_H * TILE_H + HEADER_H);
     window.set_title("Big Snek".into());
+
+    commands
+        .spawn_bundle(ColorMesh2dBundle {
+            mesh: meshes
+                .add(Mesh::from(shape::Quad::new(Vec2::new(
+                    MAP_W * TILE_W,
+                    MAP_H * TILE_H + HEADER_H,
+                ))))
+                .into(),
+            material: colors.add(ColorMaterial {
+                color: Color::rgba(0.0, 0.0, 0.0, 0.8),
+                ..default()
+            }),
+            visibility: Visibility { is_visible: false },
+            transform: Transform {
+                translation: Vec3::new(0.0, 0.0, 0.01),
+                ..default()
+            },
+            ..default()
+        })
+        .insert(UIScreenOverlay);
+
+    let font = asset_server.load("pixeboy.ttf");
+
+    commands.spawn_bundle(ColorMesh2dBundle {
+        mesh: meshes
+            .add(Mesh::from(shape::Quad::new(Vec2::new(
+                MAP_W * TILE_W,
+                HEADER_H,
+            ))))
+            .into(),
+        material: colors.add(ColorMaterial {
+            color: Color::BLACK,
+            ..default()
+        }),
+        transform: Transform {
+            translation: Vec3::new(0.0, MAP_H * TILE_H / 2.0, 0.03),
+            ..default()
+        },
+        ..default()
+    });
+
+    commands
+        .spawn_bundle(Text2dBundle {
+            text: Text::from_section(
+                String::from(""),
+                TextStyle {
+                    font: font.clone(),
+                    font_size: 60.0,
+                    color: Color::WHITE,
+                },
+            )
+            .with_alignment(TextAlignment::CENTER),
+            transform: Transform {
+                translation: Vec3::new(0.0, 0.0, 0.04),
+                ..default()
+            },
+            ..default()
+        })
+        .insert(UICenterText);
+
+    commands
+        .spawn_bundle(Text2dBundle {
+            text: Text::from_section(
+                String::from("POINTS: 0"),
+                TextStyle {
+                    font,
+                    font_size: 14.0,
+                    color: Color::WHITE,
+                },
+            )
+            .with_alignment(TextAlignment::TOP_RIGHT),
+            transform: Transform {
+                translation: Vec3::new(
+                    MAP_W * TILE_W / 2.0 - 10.0,
+                    ((MAP_H * TILE_H + HEADER_H) / 2.0) - 10.0,
+                    0.04,
+                ),
+                ..default()
+            },
+            ..default()
+        })
+        .insert(UIRightHeaderText);
 
     commands.insert_resource(MoveTimer(Timer::from_seconds(0.1, true)));
     commands.insert_resource(AppleTexture(asset_server.load("apple.png")));
@@ -109,6 +221,11 @@ fn setup(mut commands: Commands, mut windows: ResMut<Windows>, asset_server: Res
 
         commands.insert_resource(SnakeBodies(snakes));
     }
+
+    commands.insert_resource(GameState::Starting {
+        countdown: 3,
+        timer: Timer::from_seconds(1.0, true),
+    });
 
     commands.insert_resource(snake_textures);
 }
@@ -228,11 +345,16 @@ impl MoveDirection {
 
 fn snake_move(
     time: Res<Time>,
+    game_state: Res<GameState>,
     mut timer: ResMut<MoveTimer>,
     snakes: Query<(Entity, &MoveDirection), With<Snake>>,
     bodies: Res<SnakeBodies>,
     mut segments: Query<&mut GamePosition, With<SnakeSegment>>,
 ) {
+    if !game_state.running() {
+        return;
+    }
+
     if timer.0.tick(time.delta()).just_finished() {
         for (entity, direction) in snakes.iter() {
             let body = &bodies
@@ -266,7 +388,11 @@ fn snake_move(
     }
 }
 
-fn snake_controls(mut query: Query<&mut MoveDirection, With<Snake>>, keys: Res<Input<KeyCode>>) {
+fn snake_controls(
+    mut query: Query<&mut MoveDirection, With<Snake>>,
+    keys: Res<Input<KeyCode>>,
+    mut game_state: ResMut<GameState>,
+) {
     if keys.just_pressed(KeyCode::W) {
         query.iter_mut().next().unwrap().turn(MoveDirection::Top);
     }
@@ -281,6 +407,18 @@ fn snake_controls(mut query: Query<&mut MoveDirection, With<Snake>>, keys: Res<I
 
     if keys.just_pressed(KeyCode::D) {
         query.iter_mut().next().unwrap().turn(MoveDirection::Right);
+    }
+
+    if keys.just_pressed(KeyCode::P) {
+        match *game_state {
+            GameState::Paused { points } => {
+                *game_state.as_mut() = GameState::Running { points };
+            }
+            GameState::Running { points } => {
+                *game_state.as_mut() = GameState::Paused { points };
+            }
+            _ => {}
+        }
     }
 }
 
@@ -348,14 +486,70 @@ fn snake_draw(
     }
 }
 
+fn snake_starting(mut game_state: ResMut<GameState>, time: Res<Time>) {
+    let mut should_start = false;
+
+    if let GameState::Starting { timer, countdown } = game_state.as_mut() {
+        if timer.tick(time.delta()).just_finished() {
+            *countdown = countdown.saturating_sub(1);
+        }
+
+        if *countdown == 0 {
+            should_start = true;
+        }
+    }
+
+    if should_start {
+        *game_state.as_mut() = GameState::Running { points: 0 };
+    }
+}
+
+fn state_draw(
+    mut screen_overlay: Query<&mut Visibility, (With<UIScreenOverlay>, Without<UICenterText>)>,
+    mut center_text: Query<(&mut Text, &mut Visibility), With<UICenterText>>,
+    game_state: Res<GameState>,
+) {
+    match game_state.as_ref() {
+        GameState::Paused { .. } | GameState::GameOver { .. } | GameState::Starting { .. } => {
+            screen_overlay.iter_mut().next().unwrap().is_visible = true;
+        }
+        _ => {
+            screen_overlay.iter_mut().next().unwrap().is_visible = false;
+        }
+    }
+
+    let (mut text, mut visibility) = center_text.single_mut();
+    let mut text = text.sections.first_mut().unwrap();
+
+    match game_state.as_ref() {
+        GameState::Starting { countdown, .. } => {
+            text.value = format!("{}", countdown);
+            visibility.is_visible = true;
+        }
+        GameState::Paused { .. } => {
+            text.value = "PAUSED".into();
+            visibility.is_visible = true;
+        }
+        GameState::GameOver { .. } => {
+            text.value = "GAME OVER".into();
+            visibility.is_visible = true;
+        }
+        _ => {
+            visibility.is_visible = false;
+        }
+    }
+}
+
 struct MoveTimer(Timer);
 
 impl Plugin for SnakeGame {
     fn build(&self, app: &mut App) {
         app.insert_resource(ClearColor(Color::rgb(1.0, 1.0, 1.0)))
             .add_startup_system(setup)
+            .add_system(snake_starting)
             .add_system(snake_move)
             .add_system(snake_draw)
+            .add_system(state_draw)
             .add_system_to_stage(CoreStage::PostUpdate, snake_controls);
     }
 }
