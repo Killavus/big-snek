@@ -55,7 +55,11 @@ impl GamePosition {
         let self_f = self.as_vec2();
         let (x_f, y_f) = (self_f.x, self_f.y);
 
-        Vec3::new((x_f * TILE_W).round(), (y_f * TILE_H).round(), 0.0)
+        Vec3::new(
+            (x_f * TILE_W).round(),
+            (y_f * TILE_H).round() - (HEADER_H / 2.0),
+            0.0,
+        )
     }
 }
 
@@ -124,15 +128,15 @@ fn setup(
     let window = windows.get_primary_mut().unwrap();
 
     window.set_resizable(false);
-    window.set_resolution(MAP_W * TILE_W, MAP_H * TILE_H + HEADER_H);
+    window.set_resolution((MAP_W + 1.0) * TILE_W, (MAP_H + 1.0) * TILE_H + HEADER_H);
     window.set_title("Big Snek".into());
 
     commands
         .spawn_bundle(ColorMesh2dBundle {
             mesh: meshes
                 .add(Mesh::from(shape::Quad::new(Vec2::new(
-                    MAP_W * TILE_W,
-                    MAP_H * TILE_H + HEADER_H,
+                    (MAP_W + 1.0) * TILE_W,
+                    (MAP_H + 1.0) * TILE_H + HEADER_H,
                 ))))
                 .into(),
             material: colors.add(ColorMaterial {
@@ -153,7 +157,7 @@ fn setup(
     commands.spawn_bundle(ColorMesh2dBundle {
         mesh: meshes
             .add(Mesh::from(shape::Quad::new(Vec2::new(
-                MAP_W * TILE_W,
+                (MAP_W + 1.0) * TILE_W,
                 HEADER_H,
             ))))
             .into(),
@@ -162,7 +166,7 @@ fn setup(
             ..default()
         }),
         transform: Transform {
-            translation: Vec3::new(0.0, MAP_H * TILE_H / 2.0, 0.03),
+            translation: Vec3::new(0.0, ((MAP_H + 1.0) * TILE_H) / 2.0, 0.03),
             ..default()
         },
         ..default()
@@ -180,7 +184,7 @@ fn setup(
             )
             .with_alignment(TextAlignment::CENTER),
             transform: Transform {
-                translation: Vec3::new(0.0, 0.0, 0.04),
+                translation: Vec3::new(0.0, -HEADER_H / 2.0, 0.04),
                 ..default()
             },
             ..default()
@@ -200,8 +204,8 @@ fn setup(
             .with_alignment(TextAlignment::TOP_RIGHT),
             transform: Transform {
                 translation: Vec3::new(
-                    MAP_W * TILE_W / 2.0 - 10.0,
-                    ((MAP_H * TILE_H + HEADER_H) / 2.0) - 10.0,
+                    (MAP_W + 1.0) * TILE_W / 2.0 - 10.0,
+                    (((MAP_H + 1.0) * TILE_H + HEADER_H) / 2.0) - 10.0,
                     0.04,
                 ),
                 ..default()
@@ -216,10 +220,7 @@ fn setup(
         use self::MoveDirection::*;
         let snakes = vec![spawn_snake(
             &GamePosition::new(0, 0),
-            &[
-                Left, Left, Bottom, Right, Right, Right, Right, Bottom, Left, Left, Left, Bottom,
-                Bottom,
-            ],
+            &[Left],
             &mut commands,
         )];
 
