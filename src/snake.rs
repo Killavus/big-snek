@@ -17,6 +17,9 @@ struct GamePosition(IVec2);
 #[derive(Component)]
 struct SnakeSegment;
 
+#[derive(Component)]
+struct SnakeHead;
+
 #[derive(Clone, PartialEq, Eq, Copy, Debug, Component)]
 enum MoveDirection {
     Left,
@@ -70,6 +73,7 @@ fn spawn_snake(
         .spawn_bundle(SpriteBundle { ..default() })
         .insert(*head_position)
         .insert(SnakeSegment)
+        .insert(SnakeHead)
         .id()];
 
     for direction_from_last in segments_from_head {
@@ -137,7 +141,7 @@ fn setup(
             }),
             visibility: Visibility { is_visible: false },
             transform: Transform {
-                translation: Vec3::new(0.0, 0.0, 0.01),
+                translation: Vec3::new(0.0, 0.0, 0.02),
                 ..default()
             },
             ..default()
@@ -226,7 +230,6 @@ fn setup(
         countdown: 3,
         timer: Timer::from_seconds(1.0, true),
     });
-
     commands.insert_resource(snake_textures);
 }
 
@@ -424,7 +427,15 @@ fn snake_controls(
 
 fn snake_draw(
     snakes: Query<Entity, With<Snake>>,
-    mut segments: Query<(&GamePosition, &mut Handle<Image>, &mut Transform), With<SnakeSegment>>,
+    mut segments: Query<
+        (
+            &GamePosition,
+            &mut Handle<Image>,
+            &mut Transform,
+            Option<&SnakeHead>,
+        ),
+        With<SnakeSegment>,
+    >,
     snake_bodies: Res<SnakeBodies>,
     snake_textures: Res<SnakeTextures>,
 ) {
@@ -446,7 +457,7 @@ fn snake_draw(
                 .peek()
                 .and_then(|prev| segments.get(*prev).ok())
                 .map(|result| *result.0);
-            let (position, mut texture, mut transform) = segments
+            let (position, mut texture, mut transform, is_head) = segments
                 .get_mut(segment)
                 .expect("segment entity exists if part of snake body");
 
@@ -482,6 +493,10 @@ fn snake_draw(
             }
 
             transform.translation = position.in_window_space();
+            // In case of collision, draw the snake head on top.
+            if is_head.is_some() {
+                transform.translation.z = 0.01;
+            }
         }
     }
 }
@@ -507,6 +522,7 @@ fn snake_starting(mut game_state: ResMut<GameState>, time: Res<Time>) {
 fn state_draw(
     mut screen_overlay: Query<&mut Visibility, (With<UIScreenOverlay>, Without<UICenterText>)>,
     mut center_text: Query<(&mut Text, &mut Visibility), With<UICenterText>>,
+    mut right_text: Query<&mut Text, (With<UIRightHeaderText>, Without<UICenterText>)>,
     game_state: Res<GameState>,
 ) {
     match game_state.as_ref() {
@@ -519,23 +535,56 @@ fn state_draw(
     }
 
     let (mut text, mut visibility) = center_text.single_mut();
-    let mut text = text.sections.first_mut().unwrap();
+    let mut center_text = text.sections.first_mut().unwrap();
+    let mut text = right_text.single_mut();
+    let mut right_text = text.sections.first_mut().unwrap();
 
     match game_state.as_ref() {
         GameState::Starting { countdown, .. } => {
-            text.value = format!("{}", countdown);
+            center_text.value = format!("{}", countdown);
             visibility.is_visible = true;
         }
         GameState::Paused { .. } => {
-            text.value = "PAUSED".into();
+            center_text.value = "PAUSED".into();
             visibility.is_visible = true;
         }
         GameState::GameOver { .. } => {
-            text.value = "GAME OVER".into();
+            center_text.value = "GAME OVER".into();
             visibility.is_visible = true;
         }
         _ => {
             visibility.is_visible = false;
+        }
+    }
+
+    match game_state.as_ref() {
+        GameState::Paused { points }
+        | GameState::GameOver { points }
+        | GameState::Running { points } => {
+            right_text.value = format!("POINTS: {}", points);
+        }
+        _ => {}
+    }
+}
+
+fn snake_collision(
+    mut game_state: ResMut<GameState>,
+    snake_head: Query<&GamePosition, With<SnakeHead>>,
+    other_segments: Query<&GamePosition, (Without<SnakeHead>, With<SnakeSegment>)>,
+) {
+    if let GameState::Running { points } = game_state.as_ref() {
+        let head_pos = snake_head.single();
+        let map_h = (MAP_H / 2.0).round() as i32;
+        let map_w = (MAP_W / 2.0).round() as i32;
+
+        let snake_collided = !(-map_w..=map_w).contains(&head_pos.x)
+            || !(-map_h..=map_h).contains(&head_pos.y)
+            || other_segments
+                .iter()
+                .any(|pos| pos.x == head_pos.x && pos.y == head_pos.y);
+
+        if snake_collided {
+            *game_state.as_mut() = GameState::GameOver { points: *points };
         }
     }
 }
@@ -548,6 +597,7 @@ impl Plugin for SnakeGame {
             .add_startup_system(setup)
             .add_system(snake_starting)
             .add_system(snake_move)
+            .add_system(snake_collision)
             .add_system(snake_draw)
             .add_system(state_draw)
             .add_system_to_stage(CoreStage::PostUpdate, snake_controls);
