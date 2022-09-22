@@ -28,6 +28,9 @@ enum MoveDirection {
     Bottom,
 }
 
+#[derive(Component)]
+struct Apple;
+
 struct SnakeBodies(Vec<(Entity, Vec<Entity>)>);
 
 enum GameState {
@@ -590,6 +593,82 @@ fn snake_collision(
     }
 }
 
+#[derive(Deref, DerefMut)]
+struct AppleTimer(Timer);
+
+impl Default for AppleTimer {
+    fn default() -> Self {
+        let mut timer = Timer::from_seconds(2.0, false);
+        timer.pause();
+
+        Self(timer)
+    }
+}
+
+fn apple_spawner(
+    mut commands: Commands,
+    mut apple_timer: Local<AppleTimer>,
+    game_state: Res<GameState>,
+    time: Res<Time>,
+    apple_texture: Res<AppleTexture>,
+    used_positions: Query<&GamePosition, Without<Apple>>,
+    apple: Query<Option<&Apple>>,
+) {
+    if !game_state.running() {
+        return;
+    }
+
+    let first_spawn = if apple_timer.paused() {
+        apple_timer.unpause();
+        true
+    } else {
+        false
+    };
+
+    if first_spawn || apple.is_empty() && apple_timer.tick(time.delta()).just_finished() {
+        use itertools::Itertools;
+        use rand::prelude::*;
+        use rand::seq::IteratorRandom;
+        use std::collections::HashSet;
+
+        let mut rng = thread_rng();
+
+        let used_positions: HashSet<(i32, i32)> = used_positions
+            .iter()
+            .copied()
+            .map(|pos| (pos.x, pos.y))
+            .collect();
+
+        let map_w = (MAP_W / 2.0).round() as i32;
+        let map_h = (MAP_H / 2.0).round() as i32;
+
+        let pos = (-map_w..=map_w)
+            .cartesian_product(-map_h..=map_h)
+            .into_iter()
+            .filter(|(x, y)| !used_positions.contains(&(*x, *y)))
+            .choose(&mut rng);
+
+        if let Some((apple_x, apple_y)) = pos {
+            commands
+                .spawn_bundle(SpriteBundle {
+                    texture: apple_texture.0.clone(),
+                    ..default()
+                })
+                .insert(GamePosition::new(apple_x, apple_y))
+                .insert(Apple);
+        }
+    } else if apple.is_empty() && apple_timer.finished() {
+        apple_timer.reset();
+    }
+}
+
+fn apple_draw(mut apple: Query<(&GamePosition, &mut Transform), With<Apple>>) {
+    if !apple.is_empty() {
+        let (game_pos, mut transform) = apple.single_mut();
+        transform.translation = game_pos.in_window_space();
+    }
+}
+
 struct MoveTimer(Timer);
 
 impl Plugin for SnakeGame {
@@ -601,6 +680,8 @@ impl Plugin for SnakeGame {
             .add_system(snake_collision)
             .add_system(snake_draw)
             .add_system(state_draw)
+            .add_system(apple_draw)
+            .add_system(apple_spawner)
             .add_system_to_stage(CoreStage::PostUpdate, snake_controls);
     }
 }
