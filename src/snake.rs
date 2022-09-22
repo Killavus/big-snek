@@ -108,8 +108,8 @@ struct UICenterText;
 #[derive(Component)]
 struct UIRightHeaderText;
 
-const MAP_W: f32 = 60.0;
-const MAP_H: f32 = 60.0;
+const MAP_W: f32 = 30.0;
+const MAP_H: f32 = 30.0;
 const HEADER_H: f32 = 32.0;
 
 fn setup(
@@ -598,7 +598,7 @@ struct AppleTimer(Timer);
 
 impl Default for AppleTimer {
     fn default() -> Self {
-        let mut timer = Timer::from_seconds(2.0, false);
+        let mut timer = Timer::from_seconds(1.33, false);
         timer.pause();
 
         Self(timer)
@@ -612,7 +612,7 @@ fn apple_spawner(
     time: Res<Time>,
     apple_texture: Res<AppleTexture>,
     used_positions: Query<&GamePosition, Without<Apple>>,
-    apple: Query<Option<&Apple>>,
+    apple: Query<(), With<Apple>>,
 ) {
     if !game_state.running() {
         return;
@@ -652,6 +652,7 @@ fn apple_spawner(
             commands
                 .spawn_bundle(SpriteBundle {
                     texture: apple_texture.0.clone(),
+                    visibility: Visibility { is_visible: false },
                     ..default()
                 })
                 .insert(GamePosition::new(apple_x, apple_y))
@@ -662,18 +663,99 @@ fn apple_spawner(
     }
 }
 
-fn apple_draw(mut apple: Query<(&GamePosition, &mut Transform), With<Apple>>) {
+fn apple_draw(mut apple: Query<(&GamePosition, &mut Transform, &mut Visibility), With<Apple>>) {
     if !apple.is_empty() {
-        let (game_pos, mut transform) = apple.single_mut();
+        let (game_pos, mut transform, mut visibility) = apple.single_mut();
         transform.translation = game_pos.in_window_space();
+        visibility.is_visible = true;
+    }
+}
+
+fn apple_collision(
+    game_state: Res<GameState>,
+    mut commands: Commands,
+    mut apple: Query<(Entity, &GamePosition), With<Apple>>,
+    snake_head: Query<&GamePosition, With<SnakeHead>>,
+    mut event: EventWriter<AppleEaten>,
+) {
+    if !game_state.running() {
+        return;
+    }
+
+    if apple.is_empty() {
+        return;
+    }
+
+    let head_pos = snake_head.single();
+    let (apple_id, apple_pos) = apple.single_mut();
+
+    if apple_pos.x == head_pos.x && apple_pos.y == head_pos.y {
+        commands.entity(apple_id).despawn();
+        event.send(AppleEaten);
+    }
+}
+
+fn consume_apple(
+    mut commands: Commands,
+    mut ev_apple: EventReader<AppleEaten>,
+    mut game_state: ResMut<GameState>,
+    mut snake_bodies: ResMut<SnakeBodies>,
+    snakes: Query<Entity, With<Snake>>,
+    segments: Query<&GamePosition, With<SnakeSegment>>,
+) {
+    for _ in ev_apple.iter() {
+        if let GameState::Running { points } = game_state.as_mut() {
+            *points += 1;
+        }
+
+        for entity in snakes.iter() {
+            let snake_body = &mut snake_bodies
+                .0
+                .iter_mut()
+                .find(|(snake, _)| snake == &entity)
+                .expect("snake body exists if entity is spawned")
+                .1;
+
+            let (tail_pos, direction) =
+                snake_body
+                    .iter()
+                    .fold((None, None), |(last_pos, _), segment| {
+                        let segment_pos =
+                            segments.get(*segment).expect("segment exists if in body");
+
+                        if let Some(last_pos) = last_pos {
+                            let direction = relative_direction(&last_pos, segment_pos);
+                            (Some(*segment_pos), Some(direction))
+                        } else {
+                            (Some(*segment_pos), None)
+                        }
+                    });
+
+            if let Some((mut tail_pos, direction)) = tail_pos.zip(direction) {
+                snake_body.push(
+                    commands
+                        .spawn_bundle(SpriteBundle { ..default() })
+                        .insert({
+                            tail_pos.x += direction.x_offset();
+                            tail_pos.y += direction.y_offset();
+                            tail_pos
+                        })
+                        .insert(SnakeSegment)
+                        .id(),
+                );
+            }
+        }
     }
 }
 
 struct MoveTimer(Timer);
 
+struct AppleEaten;
+
 impl Plugin for SnakeGame {
     fn build(&self, app: &mut App) {
-        app.insert_resource(ClearColor(Color::rgb(1.0, 1.0, 1.0)))
+        app.insert_resource(ClearColor(Color::BEIGE))
+            .add_event::<AppleEaten>()
             .add_startup_system(setup)
             .add_system(snake_starting)
             .add_system(snake_move)
@@ -682,6 +764,8 @@ impl Plugin for SnakeGame {
             .add_system(state_draw)
             .add_system(apple_draw)
             .add_system(apple_spawner)
+            .add_system(apple_collision)
+            .add_system(consume_apple)
             .add_system_to_stage(CoreStage::PostUpdate, snake_controls);
     }
 }
