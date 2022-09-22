@@ -396,24 +396,53 @@ fn snake_move(
 }
 
 fn snake_controls(
-    mut query: Query<&mut MoveDirection, With<Snake>>,
+    mut query: Query<(Entity, &mut MoveDirection), With<Snake>>,
+    bodies: Res<SnakeBodies>,
+    segments: Query<&GamePosition, With<SnakeSegment>>,
     keys: Res<Input<KeyCode>>,
     mut game_state: ResMut<GameState>,
 ) {
-    if keys.just_pressed(KeyCode::W) {
-        query.iter_mut().next().unwrap().turn(MoveDirection::Top);
-    }
+    let (entity, mut move_direction) = query.single_mut();
+    let body = &bodies
+        .0
+        .iter()
+        .find(|(snake, _)| *snake == entity)
+        .unwrap()
+        .1;
 
-    if keys.just_pressed(KeyCode::S) {
-        query.iter_mut().next().unwrap().turn(MoveDirection::Bottom);
-    }
+    let mut last_direction = relative_direction(
+        segments.get(body[1]).unwrap(),
+        segments.get(body[0]).unwrap(),
+    );
 
-    if keys.just_pressed(KeyCode::A) {
-        query.iter_mut().next().unwrap().turn(MoveDirection::Left);
-    }
+    if let GameState::Running { .. } = game_state.as_ref() {
+        if keys.just_pressed(KeyCode::W) {
+            *move_direction = {
+                last_direction.turn(MoveDirection::Top);
+                last_direction
+            };
+        }
 
-    if keys.just_pressed(KeyCode::D) {
-        query.iter_mut().next().unwrap().turn(MoveDirection::Right);
+        if keys.just_pressed(KeyCode::S) {
+            *move_direction = {
+                last_direction.turn(MoveDirection::Bottom);
+                last_direction
+            };
+        }
+
+        if keys.just_pressed(KeyCode::A) {
+            *move_direction = {
+                last_direction.turn(MoveDirection::Left);
+                last_direction
+            };
+        }
+
+        if keys.just_pressed(KeyCode::D) {
+            *move_direction = {
+                last_direction.turn(MoveDirection::Right);
+                last_direction
+            };
+        }
     }
 
     if keys.just_pressed(KeyCode::P) {
